@@ -1,7 +1,7 @@
 
 #!/bin/bash
 project_top_level_dir=`git rev-parse --show-toplevel`
-remote_build_work_dir=".idea/.remote_build_work_dir"
+remote_build_work_dir=".idea/.android"
 work_dir=$project_top_level_dir/$remote_build_work_dir
 export work_dir
 

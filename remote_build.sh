@@ -19,22 +19,19 @@ log_i() {
 log_e() {
     printf "${Build_Red}$now:$1${Build_NC}\n"
 }
-#source init_.sh file 
-. work.config
-remote_build_work_dir='.idea/.remote_build_work_dir'
-
 
 print_help(){
     echo ""
     printf "${Green}********build_remote.sh**************************${NC}\n"
     printf "${Green}* Usage:                                        *${NC}\n"
-    printf "${Green}* -install: install local apk                   *${NC}\n"
-    printf "${Green}* -help: print help                             *${NC}\n"
+    printf "${Green}* -install|-i: install local apk                *${NC}\n"
+    printf "${Green}* -help|-h: print help                          *${NC}\n"
     printf "${Green}* -stop: ./gradlew --stop                       *${NC}\n"
     printf "${Green}* -clean: clean build                           *${NC}\n"
     printf "${Green}* -init: initialize server workspace            *${NC}\n"
     printf "${Green}* -download: download server apk                *${NC}\n"
     printf "${Green}* -q: just do it                                *${NC}\n"
+    printf "${Green}* -conf xxx(target config)                      *${NC}\n"
     printf "${Green}********build_remote.sh**************************${NC}\n"
     echo ""
 }
@@ -49,7 +46,7 @@ rm_file(){
 }
 
 wait_for_key(){
-    if [[ $1 = "-q" ]]; then
+    if [[ quiet -eq 1 ]]; then
         return 
     fi
     log_e "'q'键退出，其他键继续"
@@ -62,64 +59,55 @@ wait_for_key(){
     fi
     done
 }
+remote_build_work_dir='.idea/.android'
+work_config_file="work.config"
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -t|-target)   target="$2"; shift ;;
+        -conf)        work_config_file="$2";. "$2"; shift ;;
+        -i|-install)  install=1 ;;
+        -h|-help)     print_help; exit 1 ;;
+        -stop)        stop=1; ssh $remote_ip "cd $remote_workspace_dir; ./gradlew --stop";;
+        -download)    download=1 ;;
+        -clean)       clean=1; ssh $remote_ip "cd $remote_workspace_dir; ./gradlew clean";;
+        -init)        sh -c "./work_init.sh -init"; exit 1 ;;
+        -q)           quiet=1 ;;
+        *) echo "Unknown parameter passed: $1";print_help; exit 1 ;;
+    esac
+    shift
+done
+
+if [[ stop -eq 1 ]] || [[ clean -eq 1 ]];then
+  exit 1
+fi
+
+if test -f "$work_config_file"; then
+    #source init_.sh file 
+    . $work_config_file
+else 
+    log_e "work_config_file not found:"
+    exit 1
+fi
+
+log_i $work_config_file
+log_i $local_workspace
 
 if [ -z "$remote_ip" ] || [ -z "$local_workspace" ] || [ -z "$remote_gradle_task" ] || [ -z "$remote_workspace_dir" ]
 then
-      log_e "work.config file  is empty"
+      log_e "$work_config_file file  is empty"
       log_e "remote_ip:$remote_ip"
       log_e "local_workspace:$local_workspace"
       log_e "remote_gradle_task:$remote_gradle_task"
       log_e "remote_workspace_dir:$remote_workspace_dir"
       echo ""
-      echo "eg:work.config"
+      echo "eg:$work_config_file"
       log_i "remote_ip='172.xx.x.x'"
       log_i "local_workspace='/home/xxx/workspace/project'"
       log_i "remote_gradle_task='installXXXDebug'"
       log_i "remote_workspace_dir='/home/yyy/workspace/project''"
       exit -1 
 fi
-
-
-#check input params
-support_args_array=("-install" "-help" "-stop" "-download" "-clean" "-init" "-q")
-for param in "$@" 
-do
-    found=0
-    for item in "${support_args_array[@]}"
-    do
-        if [[ $item = "$param" ]];then 
-            found=1
-        fi
-    done
-    if [[ $found -eq 0 ]];then
-        log_e "not support param :$param"
-        print_help
-        exit 1
-    fi
-done
-
-if [[ $1 = "-init" ]]; then
-    sh -c "./work_init.sh -init"
-    exit -1
-fi
-
-if [[ $1 = "-help" ]]; then
-    print_help
-    exit -1
-fi
-
-if [[ $1 = "-stop" ]]; then
-    ssh $remote_ip "cd $remote_workspace_dir; ./gradlew --stop"
-    exit -1
-fi
-
-if [[ $1 = "-clean" ]]; then
-    ssh $remote_ip "cd $remote_workspace_dir; ./gradlew clean"
-    exit -1
-fi
-
-
-
 
 devices=`adb devices|grep -v devices |awk -F " " '{print $1}'`
 if [ -z "$devices" ];then
@@ -139,8 +127,19 @@ remote_apk_path=$remote_workspace_dir/$take
 
 tmp_apk='tmp.apk'
 
+launch_app(){
+    launch_activity=`aapt dump badging $local_workspace/$remote_build_work_dir/$tmp_apk |egrep "launchable-activity|package: name="|awk -F "name='" '{print $2}'|awk -F "'" '{print $1}'`
+    echo $launch_activity
+    package_name=`echo $launch_activity|awk -F " " '{print $1}'`
+    activity_name=`echo $launch_activity|awk -F " " '{print $2}'`
+    echo $package_name
+    echo $activity_name
+    adb shell am start -n "$package_name/$activity_name" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER
+}
+
 install_apk(){
     adb install -r $local_workspace/$remote_build_work_dir/$tmp_apk
+    launch_app
     time_cost
 }
 download_apk(){
@@ -148,11 +147,11 @@ download_apk(){
     rm_file "$remote_build_work_dir/$tmp_apk"
     scp $remote_ip:$remote_apk_path $remote_build_work_dir/$tmp_apk
 }
-if [[ $1 = "-install" ]]; then
+if [[ install -eq 1 ]]; then
     install_apk
     exit -1
 fi
-if [[ $1 = "-download" ]]; then
+if [[ download -eq 1 ]]; then
     download_apk
     install_apk
     exit -1
